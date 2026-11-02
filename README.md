@@ -61,6 +61,7 @@ Service           会话解析 / 调模型 / 落库
 
 - JDK 21、Maven 3.9+
 - MySQL 8
+- **Redis ≥ 6.0**（用到 `SET ... KEEPTTL`）
 - [Ollama](https://ollama.com/)，并拉取模型：
 
 ```bash
@@ -69,6 +70,13 @@ ollama pull qwen3:8b
 
 > 💡 `num-ctx` 设的是 8192。8G 显存的机器（如 RTX 4060 Laptop）基本是上限，
 > 再大就会把层甩到 CPU，回答明显变慢。显存不够就把 `application.yaml` 里的 `num-ctx` 降到 4096。
+
+> ⚠️ **Windows 上装 Redis 的坑**：`tporadowski/redis` 那个最常被搜到的 Windows 版
+> 最高只到 **5.0.14**，而 Sa-Token 的 Redis DAO 用了 Redis 6.0 才引入的 `KEEPTTL`，
+> 在 5.x 上会报 `ERR syntax error`。Windows 请用
+> [redis-windows](https://github.com/redis-windows/redis-windows) 的 7.x/8.x 构建，
+> 或 Memurai。装完用 `INFO server` 确认 `redis_version` ≥ 6。
+
 
 ### 2. 建库建表
 
@@ -84,9 +92,13 @@ mysql -uroot -p < docs/schema.sql
 
 ```
 DB_PASSWORD=你的MySQL密码
-REDIS_PASSWORD=（可选）
+REDIS_PASSWORD=你的Redis密码（没设 requirepass 就留空）
 JWT_SECRET=（可选，目前登录用 Sa-Token，这块暂未启用）
 ```
+
+> ⚠️ **IDEA 不会继承你在终端里 `$env:XXX` 设的变量**。在 PowerShell 里设了、IDEA 运行配置里没设，
+> 应用照样读不到 —— 典型表现是 MySQL 能连但 Redis 报 `NOAUTH Authentication required`。
+
 
 **方式 B：本地覆盖文件**
 

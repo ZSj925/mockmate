@@ -44,6 +44,12 @@
             <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
+        <dependency>
+            <groupId>cn.dev33</groupId>
+            <artifactId>sa-token-redis-template</artifactId>
+            <version>1.46.0</version>
+        </dependency>
+
         <!--Sa-token依赖-->
         <dependency>
             <groupId>cn.dev33</groupId>
