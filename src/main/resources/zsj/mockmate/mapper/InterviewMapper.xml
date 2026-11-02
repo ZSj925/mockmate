@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="zsj.mockmate.mapper.InterviewMapper">
+
+    <insert id="insertSession" useGeneratedKeys="true" keyProperty="id">
+        insert into interview_session (user_id, job_type, status, question_count, current_round)
+        values (#{userId}, #{jobType}, #{status}, #{questionCount}, #{currentRound})
+    </insert>
+
+    <select id="getSession" resultType="zsj.mockmate.pojo.entity.InterviewSessionEntity">
+        select * from interview_session where id = #{id}
+    </select>
+
+    <update id="touchRound">
+        update interview_session set current_round = #{round} where id = #{id}
+    </update>
+
+    <insert id="insertMessage" useGeneratedKeys="true" keyProperty="id">
+        insert into interview_message (session_id, round_no, role, content)
+        values (#{sessionId}, #{roundNo}, #{role}, #{content})
+    </insert>
+
+    <select id="findRecentMessages" resultType="zsj.mockmate.pojo.entity.InterviewMessageEntity">
+        select * from interview_message
+        where session_id = #{sessionId}
+        order by id desc
+        limit #{limit}
+    </select>
+
+    <!--完整历史：回放用，时间正序-->
+    <select id="findMessages" resultType="zsj.mockmate.pojo.entity.InterviewMessageEntity">
+        select * from interview_message where session_id = #{sessionId} order by id asc
+    </select>
+
+    <select id="countByRole" resultType="int">
+        select count(*) from interview_message where session_id = #{sessionId} and role = #{role}
+    </select>
+
+    <!--会话列表：首句用户发言当标题，顺带统计消息条数-->
+    <select id="findSessionsByUser" resultType="zsj.mockmate.pojo.vo.InterviewSessionVO">
+        select s.id,
+               s.current_round,
+               s.started_at,
+               (select m.content from interview_message m
+                 where m.session_id = s.id and m.role = 'CANDIDATE'
+                 order by m.id limit 1)                as title,
+               (select count(*) from interview_message m
+                 where m.session_id = s.id)            as message_count
+        from interview_session s
+        where s.user_id = #{userId}
+        order by s.id desc
+    </select>
+
+    <!--带 user_id 条件：删别人的会话会返回 0 行-->
+    <delete id="deleteSession">
+        delete from interview_session where id = #{id} and user_id = #{userId}
+    </delete>
+
+    <delete id="deleteMessages">
+        delete from interview_message where session_id = #{sessionId}
+    </delete>
+</mapper>

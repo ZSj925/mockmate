@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="zsj.mockmate.mapper.UserMapper">
+
+    <!--添加新用户-->
+    <insert id="setUser">
+        insert into user_account(username, password_hash, nickname, created_at)
+        values (#{username},#{passwordHash},#{nickname},#{createdAt})
+    </insert>
+    <!--修改用户（全部修改）-->
+    <update id="updateUser">
+        update user_account
+        set username      = #{username},
+            password_hash = #{passwordHash},
+            nickname      = #{nickname},
+            created_at    = #{createdAt}
+    </update>
+    <!--删除对应id的用户-->
+    <delete id="deleteUser">
+        delete from user_account where id = #{id}
+    </delete>
+    <!--查询对应id的用户-->
+    <select id="getUser" resultType="zsj.mockmate.pojo.entity.UserEntity">
+        select * from user_account where id = #{id}
+    </select>
+    <!--根据username查询用户-->
+    <select id="getUserByName" resultType="zsj.mockmate.pojo.entity.UserEntity">
+        select id, username, password_hash, nickname
+        from user_account
+        where username = #{username}
+    </select>
+
+</mapper>

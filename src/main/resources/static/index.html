@@ -1,0 +1,803 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mockmate · AI 面试搭子</title>
+    <link rel="icon" href="img/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+
+  <body>
+    <header class="topbar">
+      <div class="topbar-left">
+        <button id="sidebar-toggle" class="icon-btn" type="button" aria-label="打开会话列表">☰</button>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path
+                d="M8 9h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7.5L11 25.6V22H8a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"
+                fill="currentColor"
+              />
+            </svg>
+          </span>
+          <span class="brand-name">mockmate</span>
+        </div>
+      </div>
+
+      <div class="topbar-right">
+        <div class="who">
+          <span class="avatar" id="avatar">?</span>
+          <span>你好，<b id="who-name">…</b></span>
+        </div>
+        <button id="resume-btn" class="btn btn-ghost btn-sm" type="button">我的简历</button>
+        <button id="logout-btn" class="btn btn-ghost btn-sm" type="button">退出登录</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <!-- ---------- 左侧：会话列表 ---------- -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-head">
+          <h2>我的会话</h2>
+          <span class="pill" id="sessions-count">—</span>
+        </div>
+
+        <button id="new-chat-btn" class="btn new-chat" type="button">＋ 新对话</button>
+
+        <ul class="session-list" id="session-list"></ul>
+
+        <div class="sidebar-foot">
+          <kbd>Enter</kbd> 发送 · <kbd>Shift</kbd> + <kbd>Enter</kbd> 换行
+        </div>
+      </aside>
+
+      <div class="sidebar-backdrop" id="sidebar-backdrop"></div>
+
+      <!-- ---------- 右侧：聊天 ---------- -->
+      <main class="page">
+        <section class="card chat-card">
+          <div class="chat-head">
+            <div class="chat-head-main">
+              <span class="chat-avatar" aria-hidden="true">AI</span>
+              <div>
+                <h2>AI 面试官</h2>
+                <span class="chat-head-status" id="chat-status">新会话</span>
+              </div>
+            </div>
+            <span class="chat-hint">本地 Ollama · qwen3:8b</span>
+          </div>
+
+          <div class="chat-log" id="chat-log" aria-live="polite"></div>
+
+          <form class="composer" id="chat-form">
+            <textarea
+              id="chat-input"
+              class="composer-input"
+              rows="1"
+              maxlength="1000"
+              placeholder="说说你自己，或者直接问 AI 一个问题…"
+            ></textarea>
+            <button id="send-btn" class="btn send-btn" type="submit">发送</button>
+          </form>
+        </section>
+
+        <p class="kbd-hint">
+          AI 只记得同一场对话里的最近 12 条消息；点左侧任意一场可以接着聊，点和「新对话」可以另起一场。
+        </p>
+      </main>
+    </div>
+
+    <!-- ---------- 我的简历（弹窗） ---------- -->
+    <div class="modal" id="resume-modal" aria-hidden="true">
+      <div class="modal-backdrop" data-close="1"></div>
+
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="resume-title">
+        <div class="modal-head">
+          <h2 id="resume-title">我的简历</h2>
+          <button class="modal-close" id="resume-close" type="button" aria-label="关闭">×</button>
+        </div>
+
+        <div class="modal-body">
+          <label class="dropzone" id="dropzone" for="resume-file">
+            <input id="resume-file" type="file" accept=".pdf,.doc,.docx,.txt" hidden />
+            <span class="dropzone-icon" aria-hidden="true">＋</span>
+            <span class="dropzone-title">点击选择文件，或把简历拖进来</span>
+            <span class="dropzone-hint">支持 PDF / DOC / DOCX / TXT，单个不超过 10MB</span>
+          </label>
+
+          <p class="resume-alert" id="resume-alert"></p>
+
+          <ul class="resume-list" id="resume-list"></ul>
+        </div>
+
+        <div class="modal-foot">
+          <span>上传后可以在面试时选用</span>
+          <button class="btn btn-ghost btn-sm" id="resume-refresh" type="button">刷新</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+      (function () {
+        'use strict';
+
+        // 没登录就不要渲染这个页面，直接送回登录页
+        if (!MM.isLoggedIn()) {
+          MM.goLogin();
+          return;
+        }
+
+        var $ = function (id) {
+          return document.getElementById(id);
+        };
+
+        var chatLog = $('chat-log');
+        var chatForm = $('chat-form');
+        var chatInput = $('chat-input');
+        var sendBtn = $('send-btn');
+        var logoutBtn = $('logout-btn');
+        var newChatBtn = $('new-chat-btn');
+        var chatStatus = $('chat-status');
+        var sessionsCount = $('sessions-count');
+        var sessionList = $('session-list');
+        var sidebar = $('sidebar');
+        var sidebarToggle = $('sidebar-toggle');
+        var sidebarBackdrop = $('sidebar-backdrop');
+
+        var CID_KEY = 'mockmate.conversationId';
+
+        /** 空状态里的快捷提问 */
+        var SUGGESTS = ['先做个自我介绍', '问我一个 Java 基础题', '聊聊我最近做的项目'];
+
+        /**
+         * 后端第一次调用会返回一个 conversationId，之后每次都要带回去，
+         * 后端才认得出「这还是同一场对话」——记忆全靠它。
+         */
+        var conversationId = localStorage.getItem(CID_KEY);
+
+        var busy = false;
+
+        /* ---------- 顶部：当前登录用户 ---------- */
+
+        var username = MM.getUsername() || '朋友';
+        $('who-name').textContent = username;
+        $('avatar').textContent = username.charAt(0);
+
+        /* ---------- 小工具 ---------- */
+
+        function clock(value) {
+          var d = value ? new Date(value) : new Date();
+          if (isNaN(d.getTime())) return '';
+          return d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+        }
+
+        function relative(value) {
+          if (!value) return '';
+          var d = new Date(value);
+          if (isNaN(d.getTime())) return '';
+          var diff = (Date.now() - d.getTime()) / 1000;
+          if (diff < 60) return '刚刚';
+          if (diff < 3600) return Math.floor(diff / 60) + ' 分钟前';
+          if (diff < 86400) return Math.floor(diff / 3600) + ' 小时前';
+          if (diff < 86400 * 7) return Math.floor(diff / 86400) + ' 天前';
+          return d.getMonth() + 1 + '月' + d.getDate() + '日';
+        }
+
+        /* ---------- 消息气泡 ---------- */
+
+        /**
+         * 追加一条消息
+         * @param {'ai'|'me'} role
+         * @param {string} text
+         * @param {string} [time] ISO 时间；不传就是现在
+         * @returns {HTMLElement} 气泡元素，后续可以改写里面的内容
+         */
+        function appendMessage(role, text, time) {
+          var msg = document.createElement('div');
+          msg.className = 'msg ' + (role === 'me' ? 'msg-me' : 'msg-ai');
+
+          if (role !== 'me') {
+            var avatar = document.createElement('span');
+            avatar.className = 'msg-avatar';
+            avatar.setAttribute('aria-hidden', 'true');
+            avatar.textContent = 'AI';
+            msg.appendChild(avatar);
+          }
+
+          var body = document.createElement('div');
+          body.className = 'msg-body';
+
+          var bubble = document.createElement('div');
+          bubble.className = 'bubble';
+          bubble.textContent = text;
+
+          var meta = document.createElement('time');
+          meta.className = 'msg-time';
+          meta.textContent = clock(time);
+
+          body.appendChild(bubble);
+          body.appendChild(meta);
+          msg.appendChild(body);
+
+          chatLog.appendChild(msg);
+          chatLog.scrollTop = chatLog.scrollHeight;
+          return bubble;
+        }
+
+        /** 追加"正在思考"的气泡，返回那个气泡，回答回来直接改 textContent */
+        function appendThinking() {
+          var bubble = appendMessage('ai', '');
+          var typing = document.createElement('span');
+          typing.className = 'typing';
+          typing.innerHTML = '<span></span><span></span><span></span>';
+          bubble.appendChild(typing);
+          return bubble;
+        }
+
+        /** 空状态；withChips=true 时附上几个可点的快捷提问 */
+        function showEmpty(text, sub, withChips) {
+          chatLog.innerHTML = '';
+          var box = document.createElement('div');
+          box.className = 'chat-empty';
+
+          var title = document.createElement('strong');
+          title.textContent = text;
+          box.appendChild(title);
+
+          if (sub) {
+            var p = document.createElement('p');
+            p.textContent = sub;
+            box.appendChild(p);
+          }
+
+          if (withChips) {
+            var wrap = document.createElement('div');
+            wrap.className = 'chat-suggests';
+            SUGGESTS.forEach(function (suggestion) {
+              var chip = document.createElement('button');
+              chip.className = 'chip';
+              chip.type = 'button';
+              chip.textContent = suggestion;
+              chip.addEventListener('click', function () {
+                chatInput.value = suggestion;
+                autoGrow();
+                chatInput.focus();
+              });
+              wrap.appendChild(chip);
+            });
+            box.appendChild(wrap);
+          }
+
+          chatLog.appendChild(box);
+        }
+
+        function setStatus() {
+          chatStatus.textContent = conversationId ? '会话 #' + conversationId : '新会话';
+        }
+
+        /** 左侧列表里高亮当前会话 */
+        function markActive() {
+          Array.prototype.forEach.call(sessionList.querySelectorAll('.session-item'), function (li) {
+            li.classList.toggle('is-current', li.dataset.id === String(conversationId));
+          });
+        }
+
+        /* ---------- 左侧会话列表 ---------- */
+
+        function renderSessions(rows) {
+          sessionsCount.textContent = rows.length + ' 场';
+          sessionList.innerHTML = '';
+
+          if (!rows.length) {
+            var empty = document.createElement('li');
+            empty.className = 'session-empty';
+            empty.textContent = '还没有会话，说一句话就会自动开一场。';
+            sessionList.appendChild(empty);
+            return;
+          }
+
+          rows.forEach(function (row) {
+            var li = document.createElement('li');
+            li.className = 'session-item' + (String(row.id) === String(conversationId) ? ' is-current' : '');
+            li.dataset.id = String(row.id);
+
+            var open = document.createElement('button');
+            open.className = 'session-open';
+            open.type = 'button';
+            open.title = row.title || '（还没有发言）';
+            open.addEventListener('click', function () {
+              selectSession(row.id);
+              closeSidebar();
+            });
+
+            var title = document.createElement('span');
+            title.className = 'session-title';
+            title.textContent = row.title || '（还没有发言）';
+
+            var meta = document.createElement('span');
+            meta.className = 'session-meta';
+            meta.textContent =
+              (row.messageCount || 0) + ' 条 · 第 ' + (row.currentRound || 0) + ' 轮 · ' +
+              relative(row.startedAt);
+
+            open.appendChild(title);
+            open.appendChild(meta);
+
+            var del = document.createElement('button');
+            del.className = 'session-del';
+            del.type = 'button';
+            del.textContent = '×';
+            del.title = '删除这场会话';
+            del.setAttribute('aria-label', '删除会话 ' + row.id);
+            del.addEventListener('click', function (event) {
+              event.stopPropagation();
+              removeSession(row.id, del);
+            });
+
+            li.appendChild(open);
+            li.appendChild(del);
+            sessionList.appendChild(li);
+          });
+        }
+
+        async function loadSessions() {
+          try {
+            renderSessions(await MM.api('/interview/sessions'));
+          } catch (error) {
+            sessionsCount.textContent = '—';
+            console.warn('会话列表加载失败：', error.message);
+          }
+        }
+
+        /* ---------- 切换 / 新建 / 删除 ---------- */
+
+        function resetChat(tip) {
+          conversationId = null;
+          localStorage.removeItem(CID_KEY);
+          setStatus();
+          markActive();
+
+          if (tip) {
+            chatLog.innerHTML = '';
+            appendMessage('ai', tip);
+          } else {
+            showEmpty('开始第一场模拟面试', '在下面说一句话，或者点一个提示，AI 面试官会接着问你。', true);
+          }
+        }
+
+        /**
+         * 拉取一场会话的历史并重绘消息区。
+         * 只管"画出来"，不改当前会话号 —— 启动时和点击切换时用法不同，所以拆开。
+         * @returns {Promise<boolean>} 是否成功
+         */
+        async function loadHistory(id) {
+          busy = true;
+          showEmpty('正在载入会话 #' + id + ' …');
+
+          try {
+            var rows = await MM.api('/interview/sessions/' + encodeURIComponent(id) + '/messages');
+
+            chatLog.innerHTML = '';
+            if (!rows || !rows.length) {
+              showEmpty('这场会话还没有内容', '直接发一句话就能接着聊。');
+            } else {
+              rows.forEach(function (row) {
+                appendMessage(row.role === 'CANDIDATE' ? 'me' : 'ai', row.content, row.createdAt);
+              });
+              chatLog.scrollTop = chatLog.scrollHeight;
+            }
+            return true;
+          } catch (error) {
+            showEmpty('载入失败', error.message);
+            return false;
+          } finally {
+            busy = false;
+          }
+        }
+
+        /** 左侧点某一场：切过去并把历史画出来 */
+        async function selectSession(id) {
+          if (busy || String(id) === String(conversationId)) return;
+          if (!(await loadHistory(id))) return;
+
+          conversationId = String(id);
+          localStorage.setItem(CID_KEY, conversationId);
+          setStatus();
+          markActive();
+        }
+
+        async function removeSession(id, btn) {
+          if (!window.confirm('删除会话 #' + id + '？它的消息会一起删掉。')) return;
+
+          btn.disabled = true;
+          btn.textContent = '…';
+          try {
+            await MM.api('/interview/sessions/' + encodeURIComponent(id), { method: 'DELETE' });
+
+            // 删掉的正好是当前这场 → 回到新对话状态
+            if (String(id) === String(conversationId)) {
+              resetChat('这场对话已经删掉了，我们重新开始吧。');
+            }
+            await loadSessions();
+          } catch (error) {
+            window.alert('删除失败：' + error.message);
+            btn.disabled = false;
+            btn.textContent = '×';
+          }
+        }
+
+        /* ---------- 移动端抽屉 ---------- */
+
+        function openSidebar() {
+          sidebar.classList.add('is-open');
+          sidebarBackdrop.classList.add('is-visible');
+        }
+
+        function closeSidebar() {
+          sidebar.classList.remove('is-open');
+          sidebarBackdrop.classList.remove('is-visible');
+        }
+
+        sidebarToggle.addEventListener('click', function () {
+          if (sidebar.classList.contains('is-open')) closeSidebar();
+          else openSidebar();
+        });
+        sidebarBackdrop.addEventListener('click', closeSidebar);
+
+        /* ---------- 退出登录 ---------- */
+
+        logoutBtn.addEventListener('click', async function () {
+          logoutBtn.disabled = true;
+          logoutBtn.textContent = '退出中…';
+          try {
+            // 该接口已在 SaTokenConfigure 放行，token 过期了也能调通
+            await MM.api('/auth/doLogout', { method: 'POST' });
+          } catch (error) {
+            console.warn('退出接口出错，仍清理本地登录态：', error.message);
+          }
+          MM.clearSession();
+          // 换了账号就不要接着用上一个人的上下文了
+          localStorage.removeItem(CID_KEY);
+          location.replace('login.html');
+        });
+
+        /* ---------- 新对话 ---------- */
+
+        newChatBtn.addEventListener('click', function () {
+          if (busy) return;
+          resetChat();
+          chatInput.value = '';
+          autoGrow();
+          chatInput.focus();
+          closeSidebar();
+        });
+
+        /* ---------- 输入框：自动长高 ---------- */
+
+        function autoGrow() {
+          chatInput.style.height = 'auto';
+          chatInput.style.height = Math.min(chatInput.scrollHeight, 168) + 'px';
+        }
+
+        chatInput.addEventListener('input', autoGrow);
+
+        /* Enter 发送，Shift+Enter 换行；中文输入法选词时的 Enter 不能当发送 */
+        chatInput.addEventListener('keydown', function (event) {
+          if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+          event.preventDefault();
+          chatForm.requestSubmit();
+        });
+
+        /* ---------- 发消息 ---------- */
+
+        function setBusy(value) {
+          busy = value;
+          sendBtn.disabled = value;
+          chatInput.disabled = value;
+          if (!value) chatInput.focus();
+        }
+
+        async function ask(question) {
+          if (busy) return;
+          setBusy(true);
+
+          // 清掉空状态再放气泡
+          if (chatLog.querySelector('.chat-empty')) chatLog.innerHTML = '';
+          appendMessage('me', question);
+
+          var bubble = appendThinking();
+
+          try {
+            // GET /ai/chat?q=...&conversationId=...
+            //   ->  Result<InterviewReplyVO>  ->  data = { conversationId, answer }
+            var url =
+              '/interview/chat?q=' +
+              encodeURIComponent(question) +
+              (conversationId ? '&conversationId=' + encodeURIComponent(conversationId) : '');
+
+            var data = await MM.api(url);
+
+            // 契约对不上时给一句人话，别在页面上显示 [object Object]
+            if (!data || typeof data !== 'object' || !('answer' in data)) {
+              throw new Error('后端返回结构不对，期望 { conversationId, answer }');
+            }
+
+            // 第一次由后端发号，之后一直沿用它，才有上下文
+            if (data.conversationId && data.conversationId !== conversationId) {
+              conversationId = data.conversationId;
+              localStorage.setItem(CID_KEY, conversationId);
+              setStatus();
+              markActive();
+            }
+
+            bubble.textContent = data.answer || '（AI 没有返回内容）';
+          } catch (error) {
+            bubble.textContent = '出错了：' + error.message;
+          } finally {
+            chatLog.scrollTop = chatLog.scrollHeight;
+            setBusy(false);
+            // 消息条数/轮次变了，左侧列表顺手刷新一次
+            loadSessions();
+          }
+        }
+
+        chatForm.addEventListener('submit', function (event) {
+          event.preventDefault();
+          var question = chatInput.value.trim();
+          if (!question || busy) {
+            chatInput.focus();
+            return;
+          }
+          chatInput.value = '';
+          autoGrow();
+          ask(question);
+        });
+
+        /* ---------- 我的简历 ---------- */
+
+        // 上传：POST   /resume/resume   multipart 字段名 file
+        // 列表：GET    /resume          -> Result<List<{id,fileName,fileType,fileSize,createdAt}>>
+        // 删除：DELETE /resume/{id}     -> Result<Void>
+        var RESUME_UPLOAD_API = '/resume/resume';
+        var RESUME_LIST_API = '/resume';
+        var ACCEPTED_EXT = ['pdf', 'doc', 'docx', 'txt'];
+        var MAX_RESUME_SIZE = 10 * 1024 * 1024;
+
+        var resumeBtn = $('resume-btn');
+        var resumeModal = $('resume-modal');
+        var resumeClose = $('resume-close');
+        var resumeFile = $('resume-file');
+        var resumeList = $('resume-list');
+        var resumeAlert = $('resume-alert');
+        var resumeRefresh = $('resume-refresh');
+        var dropzone = $('dropzone');
+
+        function openResumePanel() {
+          resumeModal.classList.add('is-open');
+          resumeModal.setAttribute('aria-hidden', 'false');
+          document.body.classList.add('no-scroll');
+          loadResumes();
+        }
+
+        function closeResumePanel() {
+          resumeModal.classList.remove('is-open');
+          resumeModal.setAttribute('aria-hidden', 'true');
+          document.body.classList.remove('no-scroll');
+        }
+
+        /** kind: 'ok' | 'error'；传空就清掉 */
+        function setResumeAlert(kind, text) {
+          if (!text) {
+            resumeAlert.className = 'resume-alert';
+            resumeAlert.textContent = '';
+            return;
+          }
+          resumeAlert.className = 'resume-alert is-visible ' + (kind === 'ok' ? 'is-ok' : 'is-error');
+          resumeAlert.textContent = text;
+        }
+
+        function fileExt(name) {
+          var i = String(name || '').lastIndexOf('.');
+          return i < 0 ? '' : String(name).slice(i + 1).toLowerCase();
+        }
+
+        function humanSize(bytes) {
+          if (bytes === undefined || bytes === null) return '';
+          if (bytes < 1024) return bytes + ' B';
+          if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(0) + ' KB';
+          return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        }
+
+        /** GlobalExceptionHandler 对没有对应 handler 的路径返回 "接口不存在（尚未实现）" */
+        function isNotImplemented(error) {
+          return /尚未实现|接口不存在/.test((error && error.message) || '');
+        }
+
+        function resumePlaceholder(text) {
+          resumeList.innerHTML = '';
+          var li = document.createElement('li');
+          li.className = 'resume-empty';
+          li.textContent = text;
+          resumeList.appendChild(li);
+        }
+
+        function renderResumes(rows) {
+          if (!rows || !rows.length) {
+            resumePlaceholder('还没有简历，先上传一份吧');
+            return;
+          }
+
+          resumeList.innerHTML = '';
+          rows.forEach(function (row) {
+            var li = document.createElement('li');
+            li.className = 'resume-item';
+
+            var main = document.createElement('div');
+            main.className = 'resume-main';
+
+            var name = document.createElement('span');
+            name.className = 'resume-name';
+            name.textContent = row.fileName || row.name || '简历 #' + row.id;
+
+            var meta = document.createElement('span');
+            meta.className = 'resume-meta';
+            meta.textContent = [row.fileType, humanSize(row.fileSize), relative(row.createdAt)]
+              .filter(Boolean)
+              .join(' · ');
+
+            main.appendChild(name);
+            main.appendChild(meta);
+
+            var del = document.createElement('button');
+            del.className = 'resume-del';
+            del.type = 'button';
+            del.textContent = '删除';
+            del.addEventListener('click', function () {
+              removeResume(row.id, del);
+            });
+
+            li.appendChild(main);
+            li.appendChild(del);
+            resumeList.appendChild(li);
+          });
+        }
+
+        async function loadResumes() {
+          resumePlaceholder('加载中…');
+          try {
+            renderResumes(await MM.api(RESUME_LIST_API));
+          } catch (error) {
+            if (isNotImplemented(error)) {
+              resumePlaceholder('列表接口还没实现（GET /resume/list）—— 上传功能可以先用');
+            } else {
+              resumePlaceholder('加载失败：' + error.message);
+            }
+          }
+        }
+
+        async function uploadResume(file) {
+          if (!file) return;
+
+          if (ACCEPTED_EXT.indexOf(fileExt(file.name)) < 0) {
+            setResumeAlert('error', '只支持 ' + ACCEPTED_EXT.join(' / ') + ' 格式');
+            return;
+          }
+          if (file.size > MAX_RESUME_SIZE) {
+            setResumeAlert('error', '文件不能超过 10MB');
+            return;
+          }
+
+          var form = new FormData();
+          form.append('file', file);
+
+          setResumeAlert('ok', '正在上传 ' + file.name + ' …');
+          dropzone.classList.add('is-busy');
+
+          try {
+            // 注意：FormData 由 api.js 原样发送，Content-Type 交给浏览器生成
+            var data = await MM.api(RESUME_UPLOAD_API, { method: 'POST', body: form });
+
+            // 后端返回 {resumeId, fileName, fileSize, charCount}
+            var chars = data && typeof data.charCount === 'number' ? data.charCount : null;
+            setResumeAlert(
+              'ok',
+              '上传成功：' + file.name + (chars !== null ? '，识别到 ' + chars + ' 字' : '')
+            );
+            loadResumes();
+          } catch (error) {
+            setResumeAlert('error', '上传失败：' + error.message);
+          } finally {
+            dropzone.classList.remove('is-busy');
+            resumeFile.value = '';
+          }
+        }
+
+        async function removeResume(id, btn) {
+          if (!window.confirm('删除这份简历？')) return;
+
+          btn.disabled = true;
+          btn.textContent = '…';
+          try {
+            await MM.api('/resume/' + encodeURIComponent(id), { method: 'DELETE' });
+            loadResumes();
+          } catch (error) {
+            if (isNotImplemented(error)) {
+              window.alert('删除接口还没实现（DELETE /resume/{id}）');
+            } else {
+              window.alert('删除失败：' + error.message);
+            }
+            btn.disabled = false;
+            btn.textContent = '删除';
+          }
+        }
+
+        resumeBtn.addEventListener('click', openResumePanel);
+        resumeClose.addEventListener('click', closeResumePanel);
+        resumeRefresh.addEventListener('click', loadResumes);
+
+        resumeModal.addEventListener('click', function (event) {
+          if (event.target.dataset.close === '1') closeResumePanel();
+        });
+
+        document.addEventListener('keydown', function (event) {
+          if (event.key === 'Escape' && resumeModal.classList.contains('is-open')) closeResumePanel();
+        });
+
+        resumeFile.addEventListener('change', function () {
+          uploadResume(resumeFile.files && resumeFile.files[0]);
+        });
+
+        ['dragenter', 'dragover'].forEach(function (type) {
+          dropzone.addEventListener(type, function (event) {
+            event.preventDefault();
+            dropzone.classList.add('is-over');
+          });
+        });
+
+        ['dragleave', 'drop'].forEach(function (type) {
+          dropzone.addEventListener(type, function (event) {
+            event.preventDefault();
+            dropzone.classList.remove('is-over');
+          });
+        });
+
+        dropzone.addEventListener('drop', function (event) {
+          var files = event.dataTransfer && event.dataTransfer.files;
+          if (files && files.length) uploadResume(files[0]);
+        });
+
+        /* ---------- 启动 ---------- */
+
+        setStatus();
+        loadSessions();
+
+        // 支持 #resume 直接打开简历面板（也方便截图验证）
+        if (location.hash === '#resume') {
+          openResumePanel();
+        }
+
+        // 刷新后如果本地还存着上次的会话号，直接把历史画出来；拿不到就退回新对话状态
+        if (conversationId) {
+          loadHistory(conversationId).then(function (ok) {
+            if (ok) {
+              markActive();
+              return;
+            }
+            conversationId = null;
+            localStorage.removeItem(CID_KEY);
+            setStatus();
+            markActive();
+            showEmpty('开始第一场模拟面试', '在下面说一句话，或者点一个提示，AI 面试官会接着问你。', true);
+          });
+        } else {
+          showEmpty('开始第一场模拟面试', '在下面说一句话，或者点一个提示，AI 面试官会接着问你。', true);
+        }
+
+        autoGrow();
+        chatInput.focus();
+      })();
+    </script>
+  </body>
+</html>

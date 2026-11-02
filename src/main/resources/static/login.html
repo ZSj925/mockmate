@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>登录 · mockmate</title>
+    <link rel="icon" href="img/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+
+  <body class="auth-page">
+    <div class="auth-shell">
+      <!-- 左侧：品牌面板（窄屏自动隐藏） -->
+      <aside class="auth-brand">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path
+                d="M8 9h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-7.5L11 25.6V22H8a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2Z"
+                fill="currentColor"
+              />
+            </svg>
+          </span>
+          <span class="brand-name">mockmate</span>
+        </div>
+
+        <div>
+          <h1>用一场模拟面试，<br />把紧张练没。</h1>
+          <p>AI 面试官一次只问一个问题，你答完它接着问。</p>
+
+          <ul class="auth-points">
+            <li>每场对话互相独立，AI 只记得当前这场</li>
+            <li>对话写进数据库，随时翻回来接着聊</li>
+            <li>跑在本地 Ollama 上，数据留在你自己机器</li>
+          </ul>
+        </div>
+
+        <p class="auth-note">三句一顿 · 练到不慌</p>
+      </aside>
+
+      <!-- 右侧：登录表单 -->
+      <main class="auth-card">
+        <h2 class="auth-title">欢迎回来</h2>
+        <p class="auth-sub">登录后继续你的面试练习</p>
+
+        <!-- 登录失败、会话过期等提示都显示在这里 -->
+        <div id="alert" class="alert alert-error" role="alert">
+          <span id="alert-text"></span>
+        </div>
+
+        <form id="login-form" novalidate>
+          <div class="field">
+            <label for="username">用户名</label>
+            <input
+              id="username"
+              name="username"
+              class="input"
+              type="text"
+              autocomplete="username"
+              placeholder="请输入用户名"
+              required
+              autofocus
+            />
+          </div>
+
+          <div class="field">
+            <label for="password">密码</label>
+            <input
+              id="password"
+              name="password"
+              class="input"
+              type="password"
+              autocomplete="current-password"
+              placeholder="请输入密码"
+              required
+            />
+          </div>
+
+          <button id="submit-btn" class="btn btn-block" type="submit">
+            <span class="spinner" id="spinner" hidden></span>
+            <span id="submit-label">登录</span>
+          </button>
+        </form>
+
+        <!-- 本地学习项目方便自测用的提示，上线前把这段删掉即可 -->
+        <p class="demo-hint">测试账号：<code>zsj</code> / <code>123456</code></p>
+
+        <p class="auth-foot">登录即表示你同意用本练习工具提升面试表达</p>
+      </main>
+    </div>
+
+    <script src="js/api.js"></script>
+    <script>
+      (function () {
+        'use strict';
+
+        var form = document.getElementById('login-form');
+        var usernameInput = document.getElementById('username');
+        var passwordInput = document.getElementById('password');
+        var submitBtn = document.getElementById('submit-btn');
+        var submitLabel = document.getElementById('submit-label');
+        var spinner = document.getElementById('spinner');
+        var alertBox = document.getElementById('alert');
+        var alertText = document.getElementById('alert-text');
+
+        var loading = false;
+
+        function showError(message) {
+          alertText.textContent = message;
+          alertBox.classList.add('is-visible');
+        }
+
+        function hideError() {
+          alertBox.classList.remove('is-visible');
+        }
+
+        function setLoading(value) {
+          loading = value;
+          submitBtn.disabled = value;
+          spinner.hidden = !value;
+          submitLabel.textContent = value ? '登录中…' : '登录';
+        }
+
+        // 上一个页面把用户踢回来时（token 过期）带个 ?reason=expired
+        (function showReason() {
+          var reason = new URLSearchParams(location.search).get('reason');
+          if (reason === 'expired') {
+            showError('登录已过期，请重新登录');
+          } else if (reason) {
+            showError(decodeURIComponent(reason));
+          }
+        })();
+
+        // 如果本地已经存着登录态，直接进主页（进不去会被 401 踢回来，不会死循环）
+        if (MM.isLoggedIn()) {
+          location.replace('index.html');
+          return;
+        }
+
+        [usernameInput, passwordInput].forEach(function (input) {
+          input.addEventListener('input', hideError);
+        });
+
+        form.addEventListener('submit', async function (event) {
+          event.preventDefault();
+          if (loading) return;
+
+          var username = usernameInput.value.trim();
+          var password = passwordInput.value;
+
+          if (!username) {
+            showError('请填写用户名');
+            usernameInput.focus();
+            return;
+          }
+          if (!password) {
+            showError('请填写密码');
+            passwordInput.focus();
+            return;
+          }
+
+          hideError();
+          setLoading(true);
+
+          try {
+            // POST /auth/doLogin  ->  Result<LoginResponse>  ->  {tokenName, tokenValue, tokenTimeout}
+            var data = await MM.api('/auth/doLogin', {
+              method: 'POST',
+              body: { username: username, password: password }
+            });
+
+            if (!data || !data.tokenValue) {
+              throw new Error('登录成功但没拿到 token，请检查后端返回');
+            }
+
+            MM.saveSession(data, username);
+
+            // 换了账号，别接着用上一个人留在浏览器里的会话号
+            localStorage.removeItem('mockmate.conversationId');
+
+            location.replace('index.html');
+          } catch (error) {
+            setLoading(false);
+            showError(error.message || '登录失败，请重试');
+            passwordInput.select();
+          }
+        });
+      })();
+    </script>
+  </body>
+</html>
