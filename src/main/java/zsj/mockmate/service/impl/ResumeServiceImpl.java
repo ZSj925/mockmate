@@ -12,6 +12,7 @@ import zsj.mockmate.pojo.entity.resumeEntity;
 import zsj.mockmate.pojo.vo.ResumeUploadVO;
 import zsj.mockmate.pojo.vo.ResumeVO;
 import zsj.mockmate.service.ResumeService;
+import zsj.mockmate.service.ResumeSummaryService;
 import zsj.mockmate.utils.FileNameUtils;
 
 import java.io.IOException;
@@ -25,9 +26,12 @@ public class ResumeServiceImpl implements ResumeService {
     private static final int MIN_TEXT_LENGTH = 50;
 
     private final ResumeMapper resumeMapper;
+    private final ResumeSummaryService resumeSummaryService;
 
-    public ResumeServiceImpl(ResumeMapper resumeMapper) {
+    public ResumeServiceImpl(ResumeMapper resumeMapper,
+                             ResumeSummaryService resumeSummaryService) {
         this.resumeMapper = resumeMapper;
+        this.resumeSummaryService = resumeSummaryService;
     }
 
     /**
@@ -86,15 +90,24 @@ public class ResumeServiceImpl implements ResumeService {
         log.info("简历入库: id={}, userId={}, fileName={}, 字数={}",
                 resume.getId(), resume.getUserId(), fileName, rawText.length());
 
-        return new ResumeUploadVO(resume.getId(), fileName, file.getSize(), rawText.length());
+        // ⑦ 摘要交给后台生成（本地模型要十几秒，不能阻塞上传请求）
+        //    注意：这里调用的是另一个 bean 的方法，@Async 才会生效
+        resumeSummaryService.generateAsync(resume.getId());
+
+        return new ResumeUploadVO(resume.getId(), fileName, file.getSize(), rawText.length(),
+                ResumeSummaryService.STATUS_PENDING);
     }
 
     /**
-     * 删除简历（目前没有绑定会话，以后要改TODO）
+     * 删除简历
      * @param id
      */
     @Override
     public void deleteMine(Long id) {
-        resumeMapper.deleteById(id,StpUtil.getLoginIdAsLong());
+        int removed = resumeMapper.deleteById(id, StpUtil.getLoginIdAsLong());
+        if (removed == 0) {
+            throw new ApiException("简历不存在或无权限删除");
+        }
+        log.info("删除简历 {}，用户 {}", id, StpUtil.getLoginIdAsLong());
     }
 }

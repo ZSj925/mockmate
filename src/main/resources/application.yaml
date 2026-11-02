@@ -1,55 +1,73 @@
-#项目名字mockmate，中文为面试搭子
+# =============================================================================
+# mockmate 配置
+# -----------------------------------------------------------------------------
+# ⚠️ 这个文件会进 Git 仓库，所以「任何真实密码都不许写死在这里」。
+#    所有敏感项都改成了环境变量占位符：${ENV_NAME:默认值}
+#    冒号后面是"没配到环境变量时的默认值"，敏感项留空 —— 启动会连不上，
+#    这是故意的：让你一眼看出"我忘了配"。
+#
+# 本地怎么配（二选一）：
+#   方式一（推荐）：在 IDEA 的 Run Configuration → Environment variables 里加
+#         DB_PASSWORD=你的MySQL密码
+#         REDIS_PASSWORD=（有就填，没有就留空）
+#         JWT_SECRET=（随便一串 32 位以上字符）
+#
+#   方式二：在项目根目录新建 application-local.yaml（已被 .gitignore 忽略），
+#         内容参考同目录的 application-local.yaml.example，
+#         然后用 --spring.profiles.active=local 启动。
+# =============================================================================
+
 spring:
   application:
     name: mockmate
 
-#  数据库配置
-  # mysql
+  # 数据库
   datasource:
-    url: jdbc:mysql://localhost:3306/mockmate
-    username: root
-    password: 2635534555ZSj
-  # redis
+    url: ${DB_URL:jdbc:mysql://localhost:3306/mockmate}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+
+  # Redis
   data:
     redis:
-      host: localhost
-      port: 6379
-      database: 1             #不同的数据库
-      password: 123456        #密码
-      timeout: 3s             #命令超时
-      connect-timeout: 3s     #连接超时
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      database: ${REDIS_DATABASE:1}
+      password: ${REDIS_PASSWORD:}
+      timeout: 3s
+      connect-timeout: 3s
 
-  # multipart接收文件大小的限制
+  # 文件上传大小限制
   servlet:
     multipart:
-      max-file-size: 10MB #单文件
-      max-request-size: 10MB #总大小
+      max-file-size: 10MB
+      max-request-size: 10MB
 
   # 流式输出是异步请求，默认超时偏短，长回答会被掐断
   mvc:
     async:
       request-timeout: 120s
 
-  # ai模型使用Ollama本地配置的qwen3:8b
-  # 注意：这一整块必须缩进在 spring: 下面。之前它顶到 mybatis: 之后（缩进错位），
-  # 整段配置不生效，Ollama 就退回了默认的 mistral 模型，调用时报 model 'mistral' not found
+  # AI 模型：本地 Ollama 的 qwen3:8b
+  # 注意：这一整块必须缩进在 spring: 下面，否则整段配置不生效，
+  #      Ollama 会退回默认的 mistral 模型，调用时报 model 'mistral' not found
   ai:
     model:
       chat: ollama        # 只激活 Ollama，避免 ChatClient 注入歧义
     ollama:
-      base-url: http://localhost:11434
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
       chat:
-        model: qwen3:8b
-        think: false      # qwen3 默认先吐思维链
-        num-ctx: 8192     # 上下文
+        model: ${OLLAMA_CHAT_MODEL:qwen3:8b}
+        think: false      # qwen3 默认先吐思维链，关掉省 token
+        num-ctx: 8192     # 上下文窗口；显存不够就降到 4096
 
 # MyBatis：数据库列名 password_hash 自动映射到 Java 字段 passwordHash
 mybatis:
   configuration:
     map-underscore-to-camel-case: true
 
-# AI 人设（system prompt）：改这里就行，重启生效，不用动 Java 代码
 app:
+  # AI 人设（system prompt）：改这里就行，重启生效，不用动 Java 代码
   ai:
     system-prompt: |
       你是 mockmate 的 AI 面试官。
@@ -57,15 +75,16 @@ app:
       1. 每次只问一个问题，问完就停，等候选人回答；
       2. 全程中文口语化，不要用 Markdown 标题和列表符号；
       3. 不要替候选人回答，也不要一次抛出多个问题。
-    # 交给模型的最大消息条数（一问一答算 2 条），用来控制"AI 记得多久"。
-    # 只影响喂给模型的窗口大小，不影响 interview_message 里的全量记录。
+    # 交给模型的最大消息条数（一问一答算 2 条），控制"AI 记得多久"。
+    # 只影响喂给模型的窗口，不影响 interview_message 里的全量记录。
     memory:
       window: 12
 
-    #
-    resume:
-      upload-dir: ./data/resume     # 原件落盘目录，相对项目根
-# JWt配置
+  # 简历原件落盘目录（相对项目根；该目录已在 .gitignore 里）
+  resume:
+    upload-dir: ${RESUME_UPLOAD_DIR:./data/resume}
+
+  # JWT 相关（目前登录用的是 Sa-Token，这块暂时没被读取，留着备用）
   jwt:
-    secret: ${JWT_SECRET:dev-only-please-change-this-secret-32bytes}   # 至少 32 字节
-    ttl: 8h   #持续时间
+    secret: ${JWT_SECRET:}      # 至少 32 字节，必须用环境变量给，不要写死
+    ttl: 8h

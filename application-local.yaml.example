@@ -1,0 +1,24 @@
+# =============================================================================
+# 本地配置模板
+# -----------------------------------------------------------------------------
+# 用法：
+#   1. 把本文件复制成 application-local.yaml（同目录，本项目根）
+#   2. 填上你自己的密码
+#   3. 启动时加 --spring.profiles.active=local
+#      （IDEA：Run Configuration → Active profiles 填 local）
+#
+# application-local.yaml 已经在 .gitignore 里，不会被提交。
+# 千万别把填了真实密码的版本改名成 application.yaml 提交上去。
+# =============================================================================
+
+spring:
+  datasource:
+    password: 填你的MySQL密码
+
+  data:
+    redis:
+      password: 填你的Redis密码，没有就删掉这行
+
+app:
+  jwt:
+    secret: 填一串至少32位的随机字符串

@@ -31,3 +31,30 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### 本地配置：真实密码只放在这里，绝不进仓库 ###
+application-local.yaml
+application-local.yml
+application-*.local.yaml
+.env
+.env.local
+
+### 用户上传的文件 / 落盘目录 ###
+data/
+uploads/
+
+### 日志 ###
+*.log
+logs/
+
+### 数据库导出：库里可能有真实简历（姓名/手机号），千万别提交 ###
+*.sql
+*.dump
+# 但建表脚本要进仓库
+!docs/schema.sql
+
+### 系统垃圾 ###
+.DS_Store
+Thumbs.db
+desktop.ini
+

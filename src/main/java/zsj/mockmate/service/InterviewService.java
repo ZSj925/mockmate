@@ -17,9 +17,10 @@ public interface InterviewService {
      *
      * @param question       这一轮用户说的话
      * @param conversationId 会话号，可空；空或认不出都会新建
+     * @param resumeId       只在<b>新建会话</b>时生效：这场面试依据哪份简历。可空
      * @return 会话号 + 模型回答
      */
-    InterviewReplyVO chat(String question, String conversationId);
+    InterviewReplyVO chat(String question, String conversationId, Long resumeId);
 
     /** 当前登录用户的全部会话，新的在前 */
     List<InterviewSessionVO> listSessions();

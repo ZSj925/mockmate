@@ -39,6 +39,7 @@ public class InterviewController {
      *
      * @param q              问题，1~2000 字
      * @param conversationId 会话号，可空；第一次不传，后端会新建一场并把号返回给前端
+     * @param resumeId       只在新会话时生效：这场面试依据哪份简历。可空 = 通用面试
      * @return 会话号 + 模型回答
      */
     @GetMapping("/chat")
@@ -46,9 +47,10 @@ public class InterviewController {
                                          @NotBlank(message = "问题不能为空")
                                          @Size(max = 2000, message = "问题不能超过 2000 字") String q,
                                          @RequestParam(required = false)
-                                         @Size(max = 36, message = "Id大小不能超过36字符") String conversationId) {
-        log.info("对话请求，conversationId={}", conversationId);
-        return Result.success(interviewService.chat(q, conversationId));
+                                         @Size(max = 36, message = "Id大小不能超过36字符") String conversationId,
+                                         @RequestParam(required = false) Long resumeId) {
+        log.info("对话请求，conversationId={}, resumeId={}", conversationId, resumeId);
+        return Result.success(interviewService.chat(q, conversationId, resumeId));
     }
 
     /**

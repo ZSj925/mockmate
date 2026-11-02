@@ -5,8 +5,8 @@
 <mapper namespace="zsj.mockmate.mapper.InterviewMapper">
 
     <insert id="insertSession" useGeneratedKeys="true" keyProperty="id">
-        insert into interview_session (user_id, job_type, status, question_count, current_round)
-        values (#{userId}, #{jobType}, #{status}, #{questionCount}, #{currentRound})
+        insert into interview_session (user_id, resume_id, job_type, status, question_count, current_round)
+        values (#{userId}, #{resumeId}, #{jobType}, #{status}, #{questionCount}, #{currentRound})
     </insert>
 
     <select id="getSession" resultType="zsj.mockmate.pojo.entity.InterviewSessionEntity">

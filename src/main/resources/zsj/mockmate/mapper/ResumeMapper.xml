@@ -12,18 +12,41 @@
           and user_id = #{userId}
     </delete>
 
-    <!--查询简历列表-->
+    <!--查询简历列表：不查 raw_text（mediumtext）和 profile_json，列表用不到-->
     <select id="findByUserId" resultType="zsj.mockmate.pojo.vo.ResumeVO">
-            select id, file_name, file_type, file_size, created_at
-            from resume
-            where user_id = #{userId}
-            order by id desc
+        select id, file_name, file_type, file_size, parse_status, created_at
+        from resume
+        where user_id = #{userId}
+        order by id desc
     </select>
 
-    <!--新增简历：主键回填给 Service 返回给前端-->
+    <!--按主键查整行：摘要生成要 raw_text，注入要 profile_json-->
+    <select id="findById" resultType="zsj.mockmate.pojo.entity.resumeEntity">
+        select *
+        from resume
+        where id = #{id}
+    </select>
+
+    <!--新增简历：主键回填给 Service 返回给前端；parse_status 走默认值 PENDING-->
     <insert id="insertResume" useGeneratedKeys="true" keyProperty="id">
         insert into resume (user_id, file_name, file_type, file_size, raw_text)
         values (#{userId}, #{fileName}, #{fileType}, #{fileSize}, #{rawText})
     </insert>
+
+    <!--摘要生成完成：写摘要 + 状态 + 完成时间-->
+    <update id="updateSummary">
+        update resume
+        set summary_text = #{summary},
+            parse_status = #{status},
+            parsed_at    = now(3)
+        where id = #{id}
+    </update>
+
+    <!--只改状态-->
+    <update id="updateStatus">
+        update resume
+        set parse_status = #{status}
+        where id = #{id}
+    </update>
 
 </mapper>

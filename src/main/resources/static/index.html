@@ -157,6 +157,13 @@
          */
         var conversationId = localStorage.getItem(CID_KEY);
 
+        /**
+         * 选好但还没开始的那份简历：下一句会带上 resumeId，后端据此新建一场绑定简历的会话。
+         * 会话一旦建起来，简历就绑在会话上了，这里随即清空。
+         */
+        var pendingResumeId = null;
+        var pendingResumeName = '';
+
         var busy = false;
 
         /* ---------- 顶部：当前登录用户 ---------- */
@@ -274,6 +281,10 @@
         }
 
         function setStatus() {
+          if (pendingResumeName) {
+            chatStatus.textContent = '简历：' + pendingResumeName;
+            return;
+          }
           chatStatus.textContent = conversationId ? '会话 #' + conversationId : '新会话';
         }
 
@@ -355,6 +366,8 @@
 
         function resetChat(tip) {
           conversationId = null;
+          pendingResumeId = null;
+          pendingResumeName = '';
           localStorage.removeItem(CID_KEY);
           setStatus();
           markActive();
@@ -510,12 +523,14 @@
           var bubble = appendThinking();
 
           try {
-            // GET /ai/chat?q=...&conversationId=...
+            // GET /interview/chat?q=...&conversationId=...&resumeId=...
+            //   resumeId 只在新建会话时有效：这场面试依据哪份简历
             //   ->  Result<InterviewReplyVO>  ->  data = { conversationId, answer }
             var url =
               '/interview/chat?q=' +
               encodeURIComponent(question) +
-              (conversationId ? '&conversationId=' + encodeURIComponent(conversationId) : '');
+              (conversationId ? '&conversationId=' + encodeURIComponent(conversationId) : '') +
+              (!conversationId && pendingResumeId ? '&resumeId=' + encodeURIComponent(pendingResumeId) : '');
 
             var data = await MM.api(url);
 
@@ -528,6 +543,9 @@
             if (data.conversationId && data.conversationId !== conversationId) {
               conversationId = data.conversationId;
               localStorage.setItem(CID_KEY, conversationId);
+              // 简历已经绑到这场会话上了，本地不用再挂着
+              pendingResumeId = null;
+              pendingResumeName = '';
               setStatus();
               markActive();
             }
@@ -578,13 +596,17 @@
           resumeModal.classList.add('is-open');
           resumeModal.setAttribute('aria-hidden', 'false');
           document.body.classList.add('no-scroll');
-          loadResumes();
+          loadResumes().then(function () {
+            // 有还在生成摘要的，就开着轮询等它变 READY
+            if (hasBusyResume()) startResumePolling();
+          });
         }
 
         function closeResumePanel() {
           resumeModal.classList.remove('is-open');
           resumeModal.setAttribute('aria-hidden', 'true');
           document.body.classList.remove('no-scroll');
+          stopResumePolling();
         }
 
         /** kind: 'ok' | 'error'；传空就清掉 */
@@ -623,6 +645,14 @@
           resumeList.appendChild(li);
         }
 
+        /** 摘要状态 → 中文 + 样式类 */
+        function summaryBadge(status) {
+          if (status === 'READY') return { text: '就绪', cls: 'is-ready' };
+          if (status === 'FAILED') return { text: '摘要失败', cls: 'is-failed' };
+          if (status === 'PARSING') return { text: '生成摘要中', cls: 'is-busy' };
+          return { text: '等待解析', cls: 'is-busy' };
+        }
+
         function renderResumes(rows) {
           if (!rows || !rows.length) {
             resumePlaceholder('还没有简历，先上传一份吧');
@@ -641,14 +671,34 @@
             name.className = 'resume-name';
             name.textContent = row.fileName || row.name || '简历 #' + row.id;
 
+            var badgeInfo = summaryBadge(row.parseStatus);
+            var badge = document.createElement('span');
+            badge.className = 'resume-badge ' + badgeInfo.cls;
+            badge.textContent = badgeInfo.text;
+
             var meta = document.createElement('span');
             meta.className = 'resume-meta';
             meta.textContent = [row.fileType, humanSize(row.fileSize), relative(row.createdAt)]
               .filter(Boolean)
               .join(' · ');
+            meta.appendChild(badge);
 
             main.appendChild(name);
             main.appendChild(meta);
+
+            var actions = document.createElement('div');
+            actions.className = 'resume-actions';
+
+            // 摘要没好就不给"用它面试"，否则开出来的是一场面通用面试
+            var useBtn = document.createElement('button');
+            useBtn.className = 'resume-use';
+            useBtn.type = 'button';
+            useBtn.textContent = '用它面试';
+            useBtn.disabled = row.parseStatus !== 'READY';
+            if (useBtn.disabled) useBtn.title = '摘要还在生成，稍等几秒';
+            useBtn.addEventListener('click', function () {
+              useResumeForInterview(row.id, row.fileName || ('简历 #' + row.id));
+            });
 
             var del = document.createElement('button');
             del.className = 'resume-del';
@@ -658,10 +708,28 @@
               removeResume(row.id, del);
             });
 
+            actions.appendChild(useBtn);
+            actions.appendChild(del);
+
             li.appendChild(main);
-            li.appendChild(del);
+            li.appendChild(actions);
             resumeList.appendChild(li);
           });
+        }
+
+        /** 选这份简历开一场新面试：清掉当前会话，把 resumeId 挂在下一句上 */
+        function useResumeForInterview(id, fileName) {
+          pendingResumeId = String(id);
+          pendingResumeName = fileName;
+          conversationId = null;
+          localStorage.removeItem(CID_KEY);
+
+          chatLog.innerHTML = '';
+          setStatus();
+          markActive();
+          showEmpty('已选择《' + fileName + '》', '说第一句话，AI 面试官会围绕这份简历提问。');
+          closeResumePanel();
+          chatInput.focus();
         }
 
         async function loadResumes() {
@@ -675,6 +743,36 @@
               resumePlaceholder('加载失败：' + error.message);
             }
           }
+        }
+
+        /* 摘要生成要十几秒，面板开着的时候轮询刷新状态 */
+        var resumePollTimer = null;
+
+        function hasBusyResume() {
+          return !!resumeList.querySelector('.resume-badge.is-busy');
+        }
+
+        function stopResumePolling() {
+          if (resumePollTimer) {
+            clearInterval(resumePollTimer);
+            resumePollTimer = null;
+          }
+        }
+
+        function startResumePolling() {
+          stopResumePolling();
+          var ticks = 0;
+          resumePollTimer = setInterval(function () {
+            ticks++;
+            // 最多轮询 2 分钟，防止一直挂着（比如生成卡死）
+            if (ticks > 40 || !resumeModal.classList.contains('is-open')) {
+              stopResumePolling();
+              return;
+            }
+            loadResumes().then(function () {
+              if (!hasBusyResume()) stopResumePolling();
+            });
+          }, 3000);
         }
 
         async function uploadResume(file) {
@@ -699,13 +797,17 @@
             // 注意：FormData 由 api.js 原样发送，Content-Type 交给浏览器生成
             var data = await MM.api(RESUME_UPLOAD_API, { method: 'POST', body: form });
 
-            // 后端返回 {resumeId, fileName, fileSize, charCount}
+            // 后端返回 {resumeId, fileName, fileSize, charCount, parseStatus}
             var chars = data && typeof data.charCount === 'number' ? data.charCount : null;
             setResumeAlert(
               'ok',
-              '上传成功：' + file.name + (chars !== null ? '，识别到 ' + chars + ' 字' : '')
+              '上传成功：' + file.name +
+                (chars !== null ? '，识别到 ' + chars + ' 字' : '') +
+                '。摘要正在后台生成，稍等十几秒就能用它面试。'
             );
             loadResumes();
+            // 摘要要十几秒，先把轮询挂上
+            startResumePolling();
           } catch (error) {
             setResumeAlert('error', '上传失败：' + error.message);
           } finally {
